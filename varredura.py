@@ -4,9 +4,17 @@ import re
 class ExtratorRelatorioConvenio:
     def __init__(self, caminho_excel):
         self.caminho_excel = caminho_excel
-        # Adicionado o engine='xlrd' para garantir compatibilidade com arquivos .xls
         self.df = pd.read_excel(caminho_excel, header=None, engine='xlrd')
         self.dados_processados = []
+
+    def converter_para_float(self, valor):
+        """Auxiliar para tratar e converter os valores das células para float com segurança"""
+        if pd.isna(valor) or str(valor).strip() == "":
+            return 0.0
+        try:
+            return float(str(valor).replace(',', '.'))
+        except ValueError:
+            return 0.0
 
     def processar_planilha(self):
         titular_atual = None
@@ -34,12 +42,22 @@ class ExtratorRelatorioConvenio:
                 continue
             
             # 3. Captura os procedimentos associados ao beneficiário atual
-            # Data na coluna G (índice 6) e Valor na coluna H (índice 7)
-            data_procedimento = linha[6]   
-            valor_procedimento = linha[7]  
+            # AJUSTE: Ignorando coluna H (índice 7). Capturando coluna I (índice 8) e J (índice 9)
+            valor_coluna_i = linha[8]  # Coluna I
+            valor_coluna_j = linha[9]  # Coluna J
             
-            if beneficiario_atual and pd.notna(valor_procedimento):
+            # O gatilho de execução verifica se há valores em alguma das duas colunas alvo
+            if beneficiario_atual and (pd.notna(valor_coluna_i) or pd.notna(valor_coluna_j)):
                 if "Total" in celula_a or "Competência" in celula_a or celula_a == "":
+                    continue
+                
+                # Converte e soma os valores das duas colunas para compor o total do procedimento
+                v_i = self.converter_para_float(valor_coluna_i)
+                v_j = self.converter_para_float(valor_coluna_j)
+                total_procedimento = v_i + v_j
+                
+                # Se o procedimento resultou em valor zerado em ambas, pula para otimizar a tabela
+                if total_procedimento == 0.0:
                     continue
                     
                 self.dados_processados.append({
@@ -47,24 +65,43 @@ class ExtratorRelatorioConvenio:
                     "Titular": titular_atual,
                     "Beneficiário/Dependente": beneficiario_atual,
                     "Grau Parentesco": grau_atual,
-                    "Tipo Servico": celula_a,
-                    "Data": data_procedimento,
-                    "Valor Coparticipação": valor_procedimento
+                    "Valor Coparticipação": total_procedimento
                 })
 
-    def exportar_para_flat_table(self, caminho_saida):
-        df_final = pd.DataFrame(self.dados_processados)
-        df_final.to_excel(caminho_saida, index=False)
-        print(f"Processamento concluído! Arquivo salvo em: {caminho_saida}")
-        return df_final
+    def consolidar_por_beneficiario(self):
+        """Agrupa os procedimentos somando os valores por beneficiário único"""
+        if not self.dados_processados:
+            print("Nenhum dado processado para consolidar.")
+            return pd.DataFrame()
+            
+        df_detalhado = pd.DataFrame(self.dados_processados)
+        
+        # Agrupa pelas colunas de identificação e soma a coluna de valores combinados
+        df_consolidado = df_detalhado.groupby(
+            ["Codigo Titular", "Titular", "Beneficiário/Dependente", "Grau Parentesco"], 
+            as_index=False
+        )["Valor Coparticipação"].sum()
+        
+        # Arredonda o valor final para duas casas decimais
+        df_consolidado = df_consolidado.round({"Valor Coparticipação": 2})
+        
+        return df_consolidado
 
-# Bloco de execução corrigido com base na estrutura de pastas do seu projeto
+    def exportar_para_flat_table(self, dataframe, caminho_saida):
+        """Exporta o dataframe gerado para o Excel"""
+        dataframe.to_excel(caminho_saida, index=False)
+        print(f"Processamento e consolidação concluídos! Arquivo salvo em: {caminho_saida}")
+
+
 if __name__ == "__main__":
-    # Apontando corretamente para dentro da pasta oculta .dados
     arquivo_real = ".dados/SLIP1-012735300-202605.xls" 
-    arquivo_saida = ".dados/coparticipacao_tabela_limpa.xlsx"
+    arquivo_saida = ".dados/coparticipacao_consolidada.xlsx"
     
-    print("Iniciando a varredura do arquivo real...")
+    print("Iniciando a varredura do arquivo real com colunas I e J...")
     extrator = ExtratorRelatorioConvenio(arquivo_real)
     extrator.processar_planilha()
-    extrator.exportar_para_flat_table(arquivo_saida)
+    
+    print("Consolidando valores por beneficiário...")
+    df_consolidado = extrator.consolidar_por_beneficiario()
+    
+    extrator.exportar_para_flat_table(df_consolidado, arquivo_saida)
