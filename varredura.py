@@ -4,8 +4,8 @@ import re
 class ExtratorRelatorioConvenio:
     def __init__(self, caminho_excel):
         self.caminho_excel = caminho_excel
-        # Carrega o Excel sem cabeçalho definido para ler as linhas puras
-        self.df = pd.read_excel(caminho_excel, header=None)
+        # Adicionado o engine='xlrd' para garantir compatibilidade com arquivos .xls
+        self.df = pd.read_excel(caminho_excel, header=None, engine='xlrd')
         self.dados_processados = []
 
     def processar_planilha(self):
@@ -34,12 +34,11 @@ class ExtratorRelatorioConvenio:
                 continue
             
             # 3. Captura os procedimentos associados ao beneficiário atual
-            # Correção aplicada: Data na coluna G (índice 6) e Valor na coluna H (índice 7)
-            data_procedimento = linha[6]   # Coluna G
-            valor_procedimento = linha[7]  # Coluna H
+            # Data na coluna G (índice 6) e Valor na coluna H (índice 7)
+            data_procedimento = linha[6]   
+            valor_procedimento = linha[7]  
             
             if beneficiario_atual and pd.notna(valor_procedimento):
-                # Evita capturar linhas de totais ou cabeçalhos do meio do relatório
                 if "Total" in celula_a or "Competência" in celula_a or celula_a == "":
                     continue
                     
@@ -54,14 +53,18 @@ class ExtratorRelatorioConvenio:
                 })
 
     def exportar_para_flat_table(self, caminho_saida):
-        """Transforma a lista de dicionários em uma tabela limpa e exporta"""
         df_final = pd.DataFrame(self.dados_processados)
         df_final.to_excel(caminho_saida, index=False)
         print(f"Processamento concluído! Arquivo salvo em: {caminho_saida}")
         return df_final
 
-# Para testar localmente no seu terminal, você pode descomentar as linhas abaixo:
-# if __name__ == "__main__":
-#     extrator = ExtratorRelatorioConvenio("seu_arquivo_origem.xlsx")
-#     extrator.processar_planilha()
-#     extrator.exportar_para_flat_table("coparticipacao_final.xlsx")
+# Bloco de execução corrigido com base na estrutura de pastas do seu projeto
+if __name__ == "__main__":
+    # Apontando corretamente para dentro da pasta oculta .dados
+    arquivo_real = ".dados/SLIP1-012735300-202605.xls" 
+    arquivo_saida = ".dados/coparticipacao_tabela_limpa.xlsx"
+    
+    print("Iniciando a varredura do arquivo real...")
+    extrator = ExtratorRelatorioConvenio(arquivo_real)
+    extrator.processar_planilha()
+    extrator.exportar_para_flat_table(arquivo_saida)
