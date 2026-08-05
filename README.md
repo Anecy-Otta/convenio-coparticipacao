@@ -43,7 +43,7 @@ convenio-coparticipacao/
 ├── varredura.py                             # Script principal de execução
 └── README.md                                # Documentação do projeto
 
-
+```
 ---
 
 ## ⚙️ Configuração e Instalação
