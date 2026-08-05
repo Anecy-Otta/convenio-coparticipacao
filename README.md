@@ -1,7 +1,6 @@
 # convenio-coparticipacao
 Coparticipação
 
-```markdown
 # 🏥 Automação de Coparticipação de Convênio Médico
 
 Pipeline de tratamento, consolidação e enriquecimento cadastral de relatórios mensais de coparticipação médica para importação em sistemas de Recursos Humanos / Folha de Pagamento.
@@ -44,7 +43,6 @@ convenio-coparticipacao/
 ├── varredura.py                             # Script principal de execução
 └── README.md                                # Documentação do projeto
 
-```
 
 ---
 
@@ -52,7 +50,7 @@ convenio-coparticipacao/
 
 1. **Clone o repositório:**
 ```bash
-git clone [https://github.com/SEU_USUARIO/convenio-coparticipacao.git](https://github.com/SEU_USUARIO/convenio-coparticipacao.git)
+git clone https://github.com/Anecy-Otta/convenio-coparticipacao.git
 cd convenio-coparticipacao
 
 ```
@@ -93,7 +91,7 @@ O script possui **detecção automática** do arquivo de faturamento mais recent
 
 1. Baixe o relatório de faturamento do mês no portal da operadora (formato `.xls`).
 2. Mova o arquivo baixado para a pasta `.dados/`.
-3. *(Opcional)* Caso tenha ocorrido novas admissões ou inclusões de dependentes no mês, atualize a planilha `Chapa colab e Dados dependentes.xlsx` na pasta `.dados/`.
+3. Caso tenha ocorrido novas admissões ou inclusões de dependentes no mês, atualize a planilha `Chapa colab e Dados dependentes.xlsx` na pasta `.dados/`.
 4. Execute o script no terminal:
 ```bash
 python varredura.py
