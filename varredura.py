@@ -1,6 +1,8 @@
 import pandas as pd
 import re
 import unicodedata
+import os
+import glob
 
 class ExtratorRelatorioConvenio:
     def __init__(self, caminho_excel):
@@ -124,7 +126,6 @@ class ExtratorRelatorioConvenio:
             print(f"\n⚠️ Atenção: {sem_chapa} beneficiário(s) não foram localizados no arquivo do RH.")
             print("Eles serão salvos na aba separada: 'CONFERIR_NO_RH'.")
             
-            # Tenta sugerir uma possível chapa com base no primeiro nome do titular
             df_rh['Primeiro_Nome_Titular'] = df_rh['NOME TITULAR'].apply(lambda x: str(x).split()[0].upper() if pd.notna(x) else "")
             dict_primeiro_nome = df_rh.drop_duplicates(subset=['Primeiro_Nome_Titular']).set_index('Primeiro_Nome_Titular')['CHAPA'].to_dict()
             
@@ -150,18 +151,38 @@ class ExtratorRelatorioConvenio:
                 )
         print(f"Processamento concluído com sucesso! Arquivo salvo em: {caminho_saida}")
 
+def buscar_arquivo_mais_recente(pasta=".dados", extensao="*.xls"):
+    """Encontra o arquivo .xls modificado mais recentemente na pasta informada"""
+    caminho_busca = os.path.join(pasta, extensao)
+    arquivos = glob.glob(caminho_busca)
+    
+    if not arquivos:
+        raise FileNotFoundError(f"Nenhum arquivo {extensao} foi encontrado na pasta '{pasta}'.")
+        
+    # Ordena os arquivos pela data de modificação (mais recente primeiro)
+    arquivo_mais_recente = max(arquivos, key=os.path.getmtime)
+    return arquivo_mais_recente
+
 
 if __name__ == "__main__":
-    arquivo_real = ".dados/SLIP1-012735300-202605.xls" 
-    arquivo_rh = ".dados/Chapa colab e Dados dependentes.xlsx" 
-    arquivo_saida = ".dados/coparticipacao_consolidada_rh.xlsx"
+    pasta_dados = ".dados"
+    arquivo_rh = os.path.join(pasta_dados, "Chapa colab e Dados dependentes.xlsx")
+    arquivo_saida = os.path.join(pasta_dados, "coparticipacao_consolidada_rh.xlsx")
     
-    print("Iniciando a varredura do arquivo real...")
-    extrator = ExtratorRelatorioConvenio(arquivo_real)
-    extrator.processar_planilha()
-    
-    print("Consolidando valores por beneficiário...")
-    df_consolidado = extrator.consolidar_por_beneficiario()
-    
-    df_com_chapa = extrator.mesclar_dados_rh(df_consolidado, arquivo_rh)
-    extrator.exportar_para_flat_table(df_com_chapa, arquivo_saida)
+    try:
+        # Busca automática do arquivo da operadora mais recente baixado na pasta .dados
+        arquivo_real = buscar_arquivo_mais_recente(pasta=pasta_dados, extensao="*.xls")
+        print(f"🔍 Arquivo mais recente detectado automaticamente: '{arquivo_real}'")
+        
+        print("Iniciando a varredura do arquivo...")
+        extrator = ExtratorRelatorioConvenio(arquivo_real)
+        extrator.processar_planilha()
+        
+        print("Consolidando valores por beneficiário...")
+        df_consolidado = extrator.consolidar_por_beneficiario()
+        
+        df_com_chapa = extrator.mesclar_dados_rh(df_consolidado, arquivo_rh)
+        extrator.exportar_para_flat_table(df_com_chapa, arquivo_saida)
+        
+    except Exception as e:
+        print(f"\n❌ Erro durante a execução: {e}")
