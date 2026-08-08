@@ -89,6 +89,19 @@ class ExtratorRelatorioConvenio:
         print("Carregando dados cadastrais do RH...")
         df_rh = pd.read_excel(caminho_rh, dtype={'CHAPA': str})
         
+        # Identifica a coluna de TIPO (Coluna E do arquivo RH, indeferindo maiúsculas/minúsculas)
+        coluna_tipo = None
+        for col in df_rh.columns:
+            if col.strip().upper() in ['TIPO', 'TIPO ']:
+                coluna_tipo = col
+                break
+                
+        if coluna_tipo is None:
+            # Caso não encontre por nome, assume a 5ª coluna (Índice E / Posição 4)
+            coluna_tipo = df_rh.columns[4]
+            
+        df_rh['TIPO_CADASTRO'] = df_rh[coluna_tipo].astype(str).str.strip().str.upper()
+        
         df_rh['Nome_Chave'] = df_rh['NOME DEPENDENTE'].astype(str).str.strip()
         condicao_vazio = df_rh['Nome_Chave'].isna() | (df_rh['Nome_Chave'] == '') | (df_rh['Nome_Chave'].str.upper().isin(['NAN', 'NONE']))
         df_rh.loc[condicao_vazio, 'Nome_Chave'] = df_rh['NOME TITULAR']
@@ -96,7 +109,8 @@ class ExtratorRelatorioConvenio:
         df_rh['Chave_Match'] = df_rh['Nome_Chave'].apply(self.remover_acentos)
         df_consolidado['Chave_Match'] = df_consolidado['Beneficiário/Dependente'].apply(self.remover_acentos)
         
-        df_rh_reduzido = df_rh[['Chave_Match', 'CHAPA', 'NÚMERO DEPENDENTE']].drop_duplicates(subset=['Chave_Match'])
+        # Inclui TIPO_CADASTRO no cruzamento
+        df_rh_reduzido = df_rh[['Chave_Match', 'CHAPA', 'NÚMERO DEPENDENTE', 'TIPO_CADASTRO']].drop_duplicates(subset=['Chave_Match'])
         
         print("Cruzando informações com o RH...")
         df_final = pd.merge(df_consolidado, df_rh_reduzido, on="Chave_Match", how="left")
@@ -109,7 +123,7 @@ class ExtratorRelatorioConvenio:
 
         colunas_ordenadas = [
             "CHAPA", "Titular", "NÚMERO DEPENDENTE", "Beneficiário/Dependente", 
-            "Grau Parentesco", "Codigo Titular", "Valor Coparticipação"
+            "Grau Parentesco", "Codigo Titular", "Valor Coparticipação", "TIPO_CADASTRO"
         ]
         df_final = df_final.reindex(columns=colunas_ordenadas)
         
@@ -147,14 +161,12 @@ class ExtratorRelatorioConvenio:
 
     def preencher_planilha_base(self, df_consolidado, caminho_base_modelo, caminho_saida_base, ano, mes, data_pagamento):
         """Limpa dados antigos e insere os novos dados formatados e fixos a partir da linha 7"""
-        print(f"🧹 Carregando modelo '{caminho_base_modelo}' e limpando dados antigos...")
         wb = load_workbook(caminho_base_modelo)
         ws = wb.active  
         
         linha_inicial = 7
         max_linha = max(ws.max_row, linha_inicial + 100)
         
-        # Colunas que serão limpas antes da nova escrita
         colunas_para_limpar = ['C', 'E', 'G', 'I', 'K', 'M', 'O', 'Q', 'S', 'U', 'W', 'Y', 'AA', 'AC', 'AE']
         
         # 1. LIMPEZA PRÉVIA
@@ -162,34 +174,32 @@ class ExtratorRelatorioConvenio:
             for col in colunas_para_limpar:
                 ws[f'{col}{l}'] = None
 
-        print("✍️ Inserindo novos dados e valores fixos no modelo...")
         # 2. INSERÇÃO DOS NOVOS DADOS
-        for idx, row in df_consolidado.iterrows():
+        for idx, row in df_consolidado.reset_index(drop=True).iterrows():
             linha_atual = linha_inicial + idx
             
             chapa_val = str(row['CHAPA']) if pd.notna(row['CHAPA']) else ""
             dep_val = str(row['NÚMERO DEPENDENTE']) if pd.notna(row['NÚMERO DEPENDENTE']) else ""
             valor_val = float(row['Valor Coparticipação']) if pd.notna(row['Valor Coparticipação']) else 0.0
             
-            # Preenchimento conforme as especificações
             ws[f'C{linha_atual}'] = chapa_val             # CHAPA
-            ws[f'E{linha_atual}'] = ano                   # Ano (Entrada do Usuário)
-            ws[f'G{linha_atual}'] = mes                   # Mês (Entrada do Usuário)
+            ws[f'E{linha_atual}'] = ano                   # Ano
+            ws[f'G{linha_atual}'] = mes                   # Mês
             ws[f'I{linha_atual}'] = 5                     # Fixo 5
             ws[f'K{linha_atual}'] = dep_val               # NÚMERO DEPENDENTE
-            ws[f'M{linha_atual}'] = "0176"                # Fixo 0176 (Texto)
+            ws[f'M{linha_atual}'] = "0176"                # Fixo 0176
             ws[f'O{linha_atual}'] = 0                     # Fixo 0
-            ws[f'Q{linha_atual}'] = data_pagamento        # Data Pagamento DDMMAAAA
-            ws[f'S{linha_atual}'] = ano                   # Replicado da coluna E
-            ws[f'U{linha_atual}'] = mes                   # Replicado da coluna G
-            ws[f'W{linha_atual}'] = 5                     # Replicado da coluna I
+            ws[f'Q{linha_atual}'] = data_pagamento        # Data Pagamento
+            ws[f'S{linha_atual}'] = ano                   # Replicado coluna E
+            ws[f'U{linha_atual}'] = mes                   # Replicado coluna G
+            ws[f'W{linha_atual}'] = 5                     # Replicado coluna I
             ws[f'Y{linha_atual}'] = valor_val             # Valor Coparticipação
-            ws[f'AA{linha_atual}'] = valor_val            # Valor Coparticipação (Repetido)
+            ws[f'AA{linha_atual}'] = valor_val            # Valor Coparticipação
             ws[f'AC{linha_atual}'] = 0                    # Fixo 0
             ws[f'AE{linha_atual}'] = 0                    # Fixo 0
             
         wb.save(caminho_saida_base)
-        print(f"✨ Planilha base limpa, atualizada e salva em: {caminho_saida_base}")
+        print(f" Planilha salva em: {caminho_saida_base}")
 
 
 def buscar_arquivo_mais_recente(pasta=".dados", extensao="*.xls"):
@@ -206,14 +216,15 @@ if __name__ == "__main__":
     pasta_dados = ".dados"
     arquivo_rh = os.path.join(pasta_dados, "Chapa colab e Dados dependentes.xlsx")
     arquivo_saida_auditoria = os.path.join(pasta_dados, "coparticipacao_consolidada_rh.xlsx")
+    
     planilha_base_modelo = os.path.join(pasta_dados, "Planilha base.xlsx") 
     planilha_base_preenchida = os.path.join(pasta_dados, "planilha_base_pronta.xlsx")
+    planilha_base_tratada = os.path.join(pasta_dados, "planilha_base_tratada.xlsx")
     
     try:
         arquivo_real = buscar_arquivo_mais_recente(pasta=pasta_dados, extensao="*.xls")
         print(f"🔍 Arquivo mais recente detectado automaticamente: '{arquivo_real}'\n")
         
-        # --- SOLICITAÇÃO DE DADOS AO USUÁRIO ---
         print("--- PARÂMETROS PARA PREENCHIMENTO DA PLANILHA BASE ---")
         ano_input = input("Informe o ANO da competência (ex: 2026): ").strip()
         mes_input = input("Informe o MÊS da competência (ex: 05 ou 5): ").strip().zfill(2)
@@ -232,12 +243,28 @@ if __name__ == "__main__":
         # 1. Exporta o arquivo consolidado de auditoria
         extrator.exportar_para_flat_table(df_com_chapa, arquivo_saida_auditoria)
         
-        # 2. Executa a limpeza prévia e preenche a planilha base oficial com as entradas do usuário
         if os.path.exists(planilha_base_modelo):
+            # 2. Preenche a planilha base COMPLETA
+            print("\n✍️ Gerando 'planilha_base_pronta.xlsx' (Completa)...")
             extrator.preencher_planilha_base(
                 df_com_chapa, 
                 planilha_base_modelo, 
                 planilha_base_preenchida,
+                ano=ano_input,
+                mes=mes_input,
+                data_pagamento=data_pagto_input
+            )
+            
+            # 3. FILTRAGEM: Exclui linhas onde o TIPO_CADASTRO é igual a "X"
+            df_tratado = df_com_chapa[df_com_chapa['TIPO_CADASTRO'] != 'X'].copy()
+            linhas_removidas = len(df_com_chapa) - len(df_tratado)
+            
+            # 4. Preenche a planilha base TRATADA
+            print(f"\n✂️ Gerando 'planilha_base_tratada.xlsx' (Excluídos {linhas_removidas} registros marcados com 'X')...")
+            extrator.preencher_planilha_base(
+                df_tratado, 
+                planilha_base_modelo, 
+                planilha_base_tratada,
                 ano=ano_input,
                 mes=mes_input,
                 data_pagamento=data_pagto_input
