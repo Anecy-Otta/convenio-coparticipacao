@@ -52,7 +52,7 @@ class ExtratorRelatorioConvenio:
                     grau_atual = match.group(3).strip()
                 continue
             
-            # 3. Captura estrita das Colunas I (índice 8) e J (índice 9)
+            # 3. Captura das Colunas I (índice 8) e J (índice 9)
             valor_coluna_i = linha[8] if len(linha) > 8 else None
             valor_coluna_j = linha[9] if len(linha) > 9 else None
             
@@ -83,7 +83,6 @@ class ExtratorRelatorioConvenio:
             
         df_detalhado = pd.DataFrame(self.dados_processados)
         
-        # Filtra internações apenas quando explicitamente solicitado (para a planilha tratada)
         if ignorar_internacoes:
             df_detalhado = df_detalhado[~df_detalhado['Tipo Servico'].str.upper().str.contains('INTERNA', na=False)]
         
@@ -149,6 +148,26 @@ class ExtratorRelatorioConvenio:
             self.df_erros = pd.DataFrame()
             
         return df_final
+
+    def aplicar_teto_por_chapa(self, df_tratado, teto_maximo=150.0):
+        """Aplica o teto limite de R$ 150,00 por CHAPA dividindo proporcionalmente ou travando o grupo"""
+        print(f"🛡️ Aplicando trava de teto máximo de R$ {teto_maximo:.2f} por CHAPA...")
+        df = df_tratado.copy()
+        
+        # Calcula o total acumulado por CHAPA
+        totais_por_chapa = df.groupby('CHAPA')['Valor Coparticipação'].transform('sum')
+        
+        # Aplica o ajuste proporcional para quem estourar o teto
+        condicao_estouro = totais_por_chapa > teto_maximo
+        
+        df.loc[condicao_estouro, 'Valor Coparticipação'] = (
+            (df.loc[condicao_estouro, 'Valor Coparticipação'] / totais_por_chapa[condicao_estouro]) * teto_maximo
+        ).round(2)
+        
+        chapas_afetadas = df_tratado.loc[condicao_estouro, 'CHAPA'].nunique()
+        print(f"   ➜ {chapas_afetadas} CHAPA(s) tiveram o valor reajustado para respeitar o teto de R$ {teto_maximo:.2f}.")
+        
+        return df
 
     def exportar_para_flat_table(self, dataframe, caminho_saida):
         with pd.ExcelWriter(caminho_saida, engine='openpyxl') as writer:
@@ -232,15 +251,15 @@ if __name__ == "__main__":
         extrator = ExtratorRelatorioConvenio(arquivo_real)
         extrator.processar_planilha()
         
-        # 1. PLANILHA AUDITORIA E PLANILHA BASE PRONTA (Considerando Colunas I e J, incluindo Internações)
-        print("Consolidando valores das colunas I e J (incluindo Internações)...")
+        # 1. PLANILHA AUDITORIA E PLANILHA BASE PRONTA (Sem teto, com todas as despesas)
+        print("Consolidando valores totais...")
         df_consolidado_total = extrator.consolidar_por_beneficiario(ignorar_internacoes=False)
         df_com_chapa_total = extrator.mesclar_dados_rh(df_consolidado_total, arquivo_rh)
         
         extrator.exportar_para_flat_table(df_com_chapa_total, arquivo_saida_auditoria)
         
         if os.path.exists(planilha_base_modelo):
-            print("\n✍️ Gerando 'planilha_base_pronta.xlsx' (Completa)...")
+            print("\n✍️ Gerando 'planilha_base_pronta.xlsx' (Completa, sem teto)...")
             extrator.preencher_planilha_base(
                 df_com_chapa_total, 
                 planilha_base_modelo, 
@@ -250,14 +269,18 @@ if __name__ == "__main__":
                 data_pagamento=data_pagto_input
             )
             
-            # 2. PLANILHA BASE TRATADA (Sem alterar a lógica: exclui Internações e registros TIPO 'X')
-            print("\nConsolidando valores sem Internações para a base tratada...")
+            # 2. PLANILHA BASE TRATADA (Sem Internações, Sem TIPO 'X' e Com Teto de R$ 150,00 por CHAPA)
+            print("\nConsolidando valores para a base tratada...")
             df_consolidado_sem_internacao = extrator.consolidar_por_beneficiario(ignorar_internacoes=True)
             df_com_chapa_sem_internacao = extrator.mesclar_dados_rh(df_consolidado_sem_internacao, arquivo_rh)
             
-            df_tratado_final = df_com_chapa_sem_internacao[df_com_chapa_sem_internacao['TIPO_CADASTRO'] != 'X'].copy()
+            # Filtra cadastros marcados com 'X'
+            df_tratado_temp = df_com_chapa_sem_internacao[df_com_chapa_sem_internacao['TIPO_CADASTRO'] != 'X'].copy()
             
-            print("✂️ Gerando 'planilha_base_tratada.xlsx' (Tratada)...")
+            # Aplica a trava limite de R$ 150,00 por CHAPA
+            df_tratado_final = extrator.aplicar_teto_por_chapa(df_tratado_temp, teto_maximo=150.0)
+            
+            print("\n✂️ Gerando 'planilha_base_tratada.xlsx' (Limitada a R$ 150,00 por CHAPA)...")
             extrator.preencher_planilha_base(
                 df_tratado_final, 
                 planilha_base_modelo, 
