@@ -3,6 +3,7 @@ import re
 import unicodedata
 import os
 import glob
+from openpyxl import load_workbook
 
 class ExtratorRelatorioConvenio:
     def __init__(self, caminho_excel):
@@ -20,7 +21,6 @@ class ExtratorRelatorioConvenio:
             return 0.0
 
     def remover_acentos(self, texto):
-        """Remove acentos e padroniza o texto em maiúsculas para evitar falhas no merge"""
         if pd.isna(texto):
             return ""
         texto_str = str(texto).strip().upper()
@@ -36,7 +36,6 @@ class ExtratorRelatorioConvenio:
         for index, linha in self.df.iterrows():
             celula_a = str(linha[0]).strip() if pd.notna(linha[0]) else ""
             
-            # 1. Identifica o Bloco do Titular
             if celula_a.startswith("Cod. Titular:"):
                 match = re.search(r"Cod\. Titular:\s*(\d+)\s*-\s*(.*)", celula_a)
                 if match:
@@ -44,7 +43,6 @@ class ExtratorRelatorioConvenio:
                     titular_atual = match.group(2).strip()
                 continue
                 
-            # 2. Identifica o Beneficiário (Titular ou Dependente)
             if celula_a.startswith("Beneficiário:"):
                 match = re.search(r"Beneficiário:\s*(\d+)\s*-\s*([^\(]+)\s*\((\d+)\)", celula_a)
                 if match:
@@ -52,7 +50,6 @@ class ExtratorRelatorioConvenio:
                     grau_atual = match.group(3).strip()
                 continue
             
-            # 3. Captura os procedimentos associados (Colunas I e J)
             valor_coluna_i = linha[8]  
             valor_coluna_j = linha[9]  
             
@@ -81,7 +78,6 @@ class ExtratorRelatorioConvenio:
             return pd.DataFrame()
             
         df_detalhado = pd.DataFrame(self.dados_processados)
-        
         df_consolidado = df_detalhado.groupby(
             ["Codigo Titular", "Titular", "Beneficiário/Dependente", "Grau Parentesco"], 
             as_index=False
@@ -97,7 +93,6 @@ class ExtratorRelatorioConvenio:
         condicao_vazio = df_rh['Nome_Chave'].isna() | (df_rh['Nome_Chave'] == '') | (df_rh['Nome_Chave'].str.upper().isin(['NAN', 'NONE']))
         df_rh.loc[condicao_vazio, 'Nome_Chave'] = df_rh['NOME TITULAR']
         
-        # Padronização para o cruzamento
         df_rh['Chave_Match'] = df_rh['Nome_Chave'].apply(self.remover_acentos)
         df_consolidado['Chave_Match'] = df_consolidado['Beneficiário/Dependente'].apply(self.remover_acentos)
         
@@ -118,7 +113,6 @@ class ExtratorRelatorioConvenio:
         ]
         df_final = df_final.reindex(columns=colunas_ordenadas)
         
-        # Isola quem ficou sem CHAPA/Número para gerar relatório de inconsistência
         self.df_erros = df_final[df_final['CHAPA'].isna() | (df_final['CHAPA'] == '')].copy()
         
         sem_chapa = len(self.df_erros)
@@ -141,7 +135,7 @@ class ExtratorRelatorioConvenio:
         return df_final
 
     def exportar_para_flat_table(self, dataframe, caminho_saida):
-        """Salva o resultado gerando duas abas caso existam erros de cadastro"""
+        """Exporta o relatório consolidado de auditoria"""
         with pd.ExcelWriter(caminho_saida, engine='openpyxl') as writer:
             dataframe.to_excel(writer, sheet_name='Consolidado_Folha', index=False)
             
@@ -149,30 +143,82 @@ class ExtratorRelatorioConvenio:
                 self.df_erros[['Titular', 'Beneficiário/Dependente', 'Valor Coparticipação', 'Possivel_Chapa_Empresa']].to_excel(
                     writer, sheet_name='CONFERIR_NO_RH', index=False
                 )
-        print(f"Processamento concluído com sucesso! Arquivo salvo em: {caminho_saida}")
+        print(f"📊 Arquivo de auditoria salvo em: {caminho_saida}")
+
+    def preencher_planilha_base(self, df_consolidado, caminho_base_modelo, caminho_saida_base, ano, mes, data_pagamento):
+        """Limpa dados antigos e insere os novos dados formatados e fixos a partir da linha 7"""
+        print(f"🧹 Carregando modelo '{caminho_base_modelo}' e limpando dados antigos...")
+        wb = load_workbook(caminho_base_modelo)
+        ws = wb.active  
+        
+        linha_inicial = 7
+        max_linha = max(ws.max_row, linha_inicial + 100)
+        
+        # Colunas que serão limpas antes da nova escrita
+        colunas_para_limpar = ['C', 'E', 'G', 'I', 'K', 'M', 'O', 'Q', 'S', 'U', 'W', 'Y', 'AA', 'AC', 'AE']
+        
+        # 1. LIMPEZA PRÉVIA
+        for l in range(linha_inicial, max_linha + 1):
+            for col in colunas_para_limpar:
+                ws[f'{col}{l}'] = None
+
+        print("✍️ Inserindo novos dados e valores fixos no modelo...")
+        # 2. INSERÇÃO DOS NOVOS DADOS
+        for idx, row in df_consolidado.iterrows():
+            linha_atual = linha_inicial + idx
+            
+            chapa_val = str(row['CHAPA']) if pd.notna(row['CHAPA']) else ""
+            dep_val = str(row['NÚMERO DEPENDENTE']) if pd.notna(row['NÚMERO DEPENDENTE']) else ""
+            valor_val = float(row['Valor Coparticipação']) if pd.notna(row['Valor Coparticipação']) else 0.0
+            
+            # Preenchimento conforme as especificações
+            ws[f'C{linha_atual}'] = chapa_val             # CHAPA
+            ws[f'E{linha_atual}'] = ano                   # Ano (Entrada do Usuário)
+            ws[f'G{linha_atual}'] = mes                   # Mês (Entrada do Usuário)
+            ws[f'I{linha_atual}'] = 5                     # Fixo 5
+            ws[f'K{linha_atual}'] = dep_val               # NÚMERO DEPENDENTE
+            ws[f'M{linha_atual}'] = "0176"                # Fixo 0176 (Texto)
+            ws[f'O{linha_atual}'] = 0                     # Fixo 0
+            ws[f'Q{linha_atual}'] = data_pagamento        # Data Pagamento DDMMAAAA
+            ws[f'S{linha_atual}'] = ano                   # Replicado da coluna E
+            ws[f'U{linha_atual}'] = mes                   # Replicado da coluna G
+            ws[f'W{linha_atual}'] = 5                     # Replicado da coluna I
+            ws[f'Y{linha_atual}'] = valor_val             # Valor Coparticipação
+            ws[f'AA{linha_atual}'] = valor_val            # Valor Coparticipação (Repetido)
+            ws[f'AC{linha_atual}'] = 0                    # Fixo 0
+            ws[f'AE{linha_atual}'] = 0                    # Fixo 0
+            
+        wb.save(caminho_saida_base)
+        print(f"✨ Planilha base limpa, atualizada e salva em: {caminho_saida_base}")
+
 
 def buscar_arquivo_mais_recente(pasta=".dados", extensao="*.xls"):
-    """Encontra o arquivo .xls modificado mais recentemente na pasta informada"""
     caminho_busca = os.path.join(pasta, extensao)
     arquivos = glob.glob(caminho_busca)
     
     if not arquivos:
         raise FileNotFoundError(f"Nenhum arquivo {extensao} foi encontrado na pasta '{pasta}'.")
         
-    # Ordena os arquivos pela data de modificação (mais recente primeiro)
-    arquivo_mais_recente = max(arquivos, key=os.path.getmtime)
-    return arquivo_mais_recente
+    return max(arquivos, key=os.path.getmtime)
 
 
 if __name__ == "__main__":
     pasta_dados = ".dados"
     arquivo_rh = os.path.join(pasta_dados, "Chapa colab e Dados dependentes.xlsx")
-    arquivo_saida = os.path.join(pasta_dados, "coparticipacao_consolidada_rh.xlsx")
+    arquivo_saida_auditoria = os.path.join(pasta_dados, "coparticipacao_consolidada_rh.xlsx")
+    planilha_base_modelo = os.path.join(pasta_dados, "Planilha base.xlsx") 
+    planilha_base_preenchida = os.path.join(pasta_dados, "planilha_base_pronta.xlsx")
     
     try:
-        # Busca automática do arquivo da operadora mais recente baixado na pasta .dados
         arquivo_real = buscar_arquivo_mais_recente(pasta=pasta_dados, extensao="*.xls")
-        print(f"🔍 Arquivo mais recente detectado automaticamente: '{arquivo_real}'")
+        print(f"🔍 Arquivo mais recente detectado automaticamente: '{arquivo_real}'\n")
+        
+        # --- SOLICITAÇÃO DE DADOS AO USUÁRIO ---
+        print("--- PARÂMETROS PARA PREENCHIMENTO DA PLANILHA BASE ---")
+        ano_input = input("Informe o ANO da competência (ex: 2026): ").strip()
+        mes_input = input("Informe o MÊS da competência (ex: 05 ou 5): ").strip().zfill(2)
+        data_pagto_input = input("Informe a DATA DE PAGAMENTO no formato DDMMAAAA (ex: 30052026): ").strip()
+        print("-----------------------------------------------------\n")
         
         print("Iniciando a varredura do arquivo...")
         extrator = ExtratorRelatorioConvenio(arquivo_real)
@@ -182,7 +228,22 @@ if __name__ == "__main__":
         df_consolidado = extrator.consolidar_por_beneficiario()
         
         df_com_chapa = extrator.mesclar_dados_rh(df_consolidado, arquivo_rh)
-        extrator.exportar_para_flat_table(df_com_chapa, arquivo_saida)
+        
+        # 1. Exporta o arquivo consolidado de auditoria
+        extrator.exportar_para_flat_table(df_com_chapa, arquivo_saida_auditoria)
+        
+        # 2. Executa a limpeza prévia e preenche a planilha base oficial com as entradas do usuário
+        if os.path.exists(planilha_base_modelo):
+            extrator.preencher_planilha_base(
+                df_com_chapa, 
+                planilha_base_modelo, 
+                planilha_base_preenchida,
+                ano=ano_input,
+                mes=mes_input,
+                data_pagamento=data_pagto_input
+            )
+        else:
+            print(f"⚠️ AVISO: A planilha modelo '{planilha_base_modelo}' não foi encontrada na pasta .dados.")
         
     except Exception as e:
         print(f"\n❌ Erro durante a execução: {e}")
